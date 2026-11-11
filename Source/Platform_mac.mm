@@ -1,8 +1,8 @@
 // Compiled with -fobjc-arc (see CMakeLists.txt)
+#include "Platform.h"   // JUCE (and juce_gl.h) must come before the Apple headers
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
-#include "Platform.h"
 
 namespace
 {
