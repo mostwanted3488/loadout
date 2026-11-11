@@ -152,6 +152,7 @@ private:
     void beginClose();
     void toast (const juce::String& label, const juce::String& text);
     void sound (UISounds::Sound);
+    void keySound (juce::juce_wchar, bool backspace = false);
 
     void layout();
     void updateHover (juce::Point<float> pos);

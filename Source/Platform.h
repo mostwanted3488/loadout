@@ -15,6 +15,10 @@ namespace Platform
 //==============================================================================
 namespace UISounds
 {
-    enum Sound { tick, select, folder, back, open, close, search, pin, clear, toggle, numSounds };
+    enum Sound { tick, select, folder, back, open, close, search, pin, clear, toggle,
+                 key1, key2, key3, key4, keySpace, keyBack, numSounds };
     void play (Sound);
+
+    /** ASMR keyboard click for the search field (random variant so fast typing sounds natural). */
+    void playKey (juce::juce_wchar typed, bool isBackspace = false);
 }

@@ -477,6 +477,12 @@ void WheelOverlay::sound (UISounds::Sound s)
         UISounds::play (s);
 }
 
+void WheelOverlay::keySound (juce::juce_wchar ch, bool backspace)
+{
+    if (lib->soundEnabled)
+        UISounds::playKey (ch, backspace);
+}
+
 void WheelOverlay::toast (const juce::String& label, const juce::String& text)
 {
     toastLabel = label;
@@ -896,11 +902,11 @@ bool WheelOverlay::keyPressed (const juce::KeyPress& k)
         else if (code == juce::KeyPress::backspaceKey)
         {
             if (query.isEmpty()) closeSearch();
-            else { query = query.dropLastCharacters (1); runSearch(); }
+            else { query = query.dropLastCharacters (1); keySound (0, true); runSearch(); }
         }
         else if (code == juce::KeyPress::rightKey || code == juce::KeyPress::downKey)  moveHover (1);
         else if (code == juce::KeyPress::leftKey  || code == juce::KeyPress::upKey)    moveHover (-1);
-        else if (printable)                               { query += juce::String::charToString (ch); runSearch(); }
+        else if (printable)                               { query += juce::String::charToString (ch); keySound (ch); runSearch(); }
         needsRepaint = true;
         return true;
     }
@@ -919,6 +925,7 @@ bool WheelOverlay::keyPressed (const juce::KeyPress& k)
     {
         openSearch();
         query += juce::String::charToString (ch);
+        keySound (ch);
         runSearch();
     }
     needsRepaint = true;

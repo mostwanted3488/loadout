@@ -73,6 +73,34 @@ namespace
             }
         }
 
+        // short noise burst through a band-pass, instant attack + exponential decay
+        void burst (double start, double dur, double vol, double fc, double q, int seed)
+        {
+            ensure (start + dur + 0.02);
+            juce::Random rng (seed);
+            const auto s0 = (size_t) (start * sr), len = (size_t) (dur * sr);
+            const double w0 = juce::MathConstants<double>::twoPi * fc / sr, alpha = std::sin (w0) / (2.0 * q);
+            const double b0 = alpha, b2 = -alpha, a0 = 1.0 + alpha, a1 = -2.0 * std::cos (w0), a2 = 1.0 - alpha;
+            double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+            for (size_t i = 0; i < len; ++i)
+            {
+                const double t = (double) i / sr;
+                const double x = rng.nextDouble() * 2.0 - 1.0;
+                const double y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+                x2 = x1; x1 = x; y2 = y1; y1 = y;
+                data[s0 + i] += (float) (y * vol * 3.0 * std::exp (-t / (dur * 0.22)));
+            }
+        }
+
+        // mechanical "thock": bright click + low body thump + soft key-release tick
+        void keyClick (double pitch, int seed, double release = 0.042)
+        {
+            burst (0.0,     0.012, 0.16, 4200.0 * pitch, 0.9, seed);          // switch click
+            burst (0.0,     0.035, 0.10, 1150.0 * pitch, 1.4, seed + 1);      // keycap body
+            tone (210.0 * pitch, 0.05, 0.08, false, 120.0 * pitch);           // bottom-out thump
+            burst (release, 0.010, 0.04, 2800.0 * pitch, 1.0, seed + 2);      // release tick
+        }
+
         juce::MemoryBlock toWav() const
         {
             juce::MemoryOutputStream out;
@@ -106,6 +134,12 @@ namespace
         make (UISounds::pin,    [] (Synth& s) { s.tone (880, .1, .08); s.tone (1320, .16, .08, false, 0, .08); });
         make (UISounds::clear,  [] (Synth& s) { s.tone (440, .14, .07, true, 300); });
         make (UISounds::toggle, [] (Synth& s) { s.tone (1500, .04, .05); });
+        make (UISounds::key1,     [] (Synth& s) { s.keyClick (1.00, 11); });
+        make (UISounds::key2,     [] (Synth& s) { s.keyClick (0.94, 23, 0.046); });
+        make (UISounds::key3,     [] (Synth& s) { s.keyClick (1.07, 37, 0.039); });
+        make (UISounds::key4,     [] (Synth& s) { s.keyClick (0.98, 41, 0.044); });
+        make (UISounds::keySpace, [] (Synth& s) { s.keyClick (0.78, 53, 0.055); s.burst (0.0, 0.06, 0.03, 600.0, 0.8, 54); });
+        make (UISounds::keyBack,  [] (Synth& s) { s.keyClick (0.86, 67, 0.050); });
         return wavs;
     }
 }
@@ -125,4 +159,18 @@ void UISounds::play (Sound s)
 
     if (juce::isPositiveAndBelow ((int) s, (int) numSounds))
         Platform::playWav ((int) s, wavs[(size_t) s]);
+}
+
+void UISounds::playKey (juce::juce_wchar typed, bool isBackspace)
+{
+    static juce::Random rng;
+    static int last = -1;
+
+    if (isBackspace)      { play (keyBack); return; }
+    if (typed == ' ')     { play (keySpace); return; }
+
+    int v = rng.nextInt (4);
+    if (v == last) v = (v + 1) % 4;   // never the same click twice in a row
+    last = v;
+    play ((Sound) (key1 + v));
 }
