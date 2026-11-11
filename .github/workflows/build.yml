@@ -1,0 +1,85 @@
+name: Build LOADOUT
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: mac
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (macOS universal)
+        if: matrix.name == 'mac'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Configure (Windows)
+        if: matrix.name == 'windows'
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Package (macOS)
+        if: matrix.name == 'mac'
+        run: |
+          ART=build/LOADOUT_artefacts/Release
+          mkdir -p dist/LOADOUT-mac
+          cp -R "$ART/VST3/LOADOUT.vst3" dist/LOADOUT-mac/
+          cp -R "$ART/AU/LOADOUT.component" dist/LOADOUT-mac/
+          codesign --force --deep --sign - dist/LOADOUT-mac/LOADOUT.vst3
+          codesign --force --deep --sign - dist/LOADOUT-mac/LOADOUT.component
+          cp INSTALL.txt dist/LOADOUT-mac/ || true
+          cd dist && ditto -c -k --keepParent LOADOUT-mac LOADOUT-mac.zip
+
+      - name: Package (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/LOADOUT-windows | Out-Null
+          Copy-Item -Recurse build/LOADOUT_artefacts/Release/VST3/LOADOUT.vst3 dist/LOADOUT-windows/
+          if (Test-Path INSTALL.txt) { Copy-Item INSTALL.txt dist/LOADOUT-windows/ }
+          Compress-Archive -Path dist/LOADOUT-windows -DestinationPath dist/LOADOUT-windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LOADOUT-${{ matrix.name }}
+          path: dist/LOADOUT-${{ matrix.name }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'LOADOUT (latest build)' }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          make_latest: true
+          files: dist/*.zip
+          body: |
+            LOADOUT plugin wheel by @buyorbealoser.
+            - **LOADOUT-mac.zip**: VST3 + AU (Apple Silicon & Intel)
+            - **LOADOUT-windows.zip**: VST3 (64-bit)
+            See INSTALL.txt inside the zip.

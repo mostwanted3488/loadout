@@ -1,0 +1,28 @@
+LOADOUT - install
+=================
+
+macOS
+-----
+1. Copy LOADOUT.vst3      to  ~/Library/Audio/Plug-Ins/VST3/
+   Copy LOADOUT.component to  ~/Library/Audio/Plug-Ins/Components/
+2. The plugin isn't notarized yet. If macOS blocks it, run in Terminal:
+      xattr -cr ~/Library/Audio/Plug-Ins/VST3/LOADOUT.vst3
+      xattr -cr ~/Library/Audio/Plug-Ins/Components/LOADOUT.component
+3. FL Studio: Options > Manage plugins > Find plugins.
+4. First time you open the wheel, macOS asks to allow Screen Recording for FL Studio
+   (System Settings > Privacy & Security > Screen Recording). Allow it, then restart FL Studio.
+   Without it the wheel still works, on a plain backdrop.
+
+Windows
+-------
+1. Copy the LOADOUT.vst3 folder to  C:\Program Files\Common Files\VST3\
+2. FL Studio: Options > Manage plugins > Find plugins.
+
+Use
+---
+- Put LOADOUT on a mixer insert, open it, press "Open wheel" (or Tab).
+- First launch scans your plugins (can take a minute). "Rescan plugins" to update.
+- Wheel: hover + click, 1-0 for slots, type to search, scroll for pages,
+  drag a plugin onto a slot to pin it, right-click a slot to clear it, Tab/Esc to close.
+- "Send to: Pick tracks" lets you send the chosen plugin to any track that has a LOADOUT on it
+  (e.g. open the wheel from the LOADOUT on your master).
