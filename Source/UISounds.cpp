@@ -37,8 +37,8 @@ namespace
                                             : std::sin (phase * juce::MathConstants<double>::twoPi);
 
                 double env;
-                if (t < 0.004) env = vol * t / 0.004;
-                else           env = vol * std::pow (0.0001 / vol, (t - 0.004) / juce::jmax (0.001, dur - 0.004));
+                if (t < 0.009) env = vol * t / 0.009;
+                else           env = vol * std::pow (0.0001 / vol, (t - 0.009) / juce::jmax (0.001, dur - 0.009));
 
                 data[start + i] += (float) (osc * env);
             }
@@ -88,17 +88,19 @@ namespace
                 const double x = rng.nextDouble() * 2.0 - 1.0;
                 const double y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0;
                 x2 = x1; x1 = x; y2 = y1; y1 = y;
-                data[s0 + i] += (float) (y * vol * 3.0 * std::exp (-t / (dur * 0.22)));
+                const double atk = juce::jmin (1.0, t / 0.0015);
+                data[s0 + i] += (float) (y * vol * 3.0 * atk * std::exp (-t / (dur * 0.25)));
             }
         }
 
         // mechanical "thock": bright click + low body thump + soft key-release tick
+        // soft, felted "thock": muted click + low body + gentle release
         void keyClick (double pitch, int seed, double release = 0.042)
         {
-            burst (0.0,     0.012, 0.16, 4200.0 * pitch, 0.9, seed);          // switch click
-            burst (0.0,     0.035, 0.10, 1150.0 * pitch, 1.4, seed + 1);      // keycap body
-            tone (210.0 * pitch, 0.05, 0.08, false, 120.0 * pitch);           // bottom-out thump
-            burst (release, 0.010, 0.04, 2800.0 * pitch, 1.0, seed + 2);      // release tick
+            burst (0.0,     0.009, 0.05, 1900.0 * pitch, 0.7, seed);          // muted switch click
+            burst (0.0,     0.030, 0.05,  650.0 * pitch, 1.0, seed + 1);      // keycap body
+            tone (150.0 * pitch, 0.045, 0.045, false, 95.0 * pitch);          // soft bottom-out
+            burst (release, 0.008, 0.015, 1400.0 * pitch, 0.7, seed + 2);     // release
         }
 
         juce::MemoryBlock toWav() const
@@ -112,8 +114,14 @@ namespace
             out.writeInt ((int) sr); out.writeInt ((int) sr * 2);  out.writeShort (2);  out.writeShort (16);
             out.write ("data", 4);  out.writeInt ((int) dataBytes);
 
+            // master: -4.5 dB and a gentle low-pass (~4.5 kHz) so nothing sounds harsh
+            const float a = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 4500.0f / (float) sr);
+            float lp = 0.0f;
             for (auto s : data)
-                out.writeShort ((short) juce::jlimit (-32767, 32767, (int) (s * 32767.0f)));
+            {
+                lp += a * (s - lp);
+                out.writeShort ((short) juce::jlimit (-32767, 32767, (int) (lp * 0.6f * 32767.0f)));
+            }
 
             return out.getMemoryBlock();
         }
@@ -124,21 +132,21 @@ namespace
         std::vector<juce::MemoryBlock> wavs ((size_t) UISounds::numSounds);
         auto make = [&] (UISounds::Sound s, auto&& fn) { Synth sy; fn (sy); wavs[(size_t) s] = sy.toWav(); };
 
-        make (UISounds::tick,   [] (Synth& s) { s.tone (3400, .035, .045); s.tone (1700, .03, .025, true); });
-        make (UISounds::select, [] (Synth& s) { s.tone (620, .16, .11, false, 980); s.tone (1240, .12, .04, false, 1960, .01); });
-        make (UISounds::folder, [] (Synth& s) { s.tone (520, .1, .07, true, 700); s.tone (780, .12, .05, false, 0, .06); });
-        make (UISounds::back,   [] (Synth& s) { s.tone (700, .1, .06, true, 500); });
-        make (UISounds::open,   [] (Synth& s) { s.noise (.22, .09, 500, 2600); });
-        make (UISounds::close,  [] (Synth& s) { s.noise (.2, .07, 2400, 450); });
-        make (UISounds::search, [] (Synth& s) { s.tone (880, .08, .05, false, 1320); s.noise (.14, .04, 1800, 3200); });
-        make (UISounds::pin,    [] (Synth& s) { s.tone (880, .1, .08); s.tone (1320, .16, .08, false, 0, .08); });
-        make (UISounds::clear,  [] (Synth& s) { s.tone (440, .14, .07, true, 300); });
-        make (UISounds::toggle, [] (Synth& s) { s.tone (1500, .04, .05); });
+        make (UISounds::tick,   [] (Synth& s) { s.tone (2100, .03, .03); s.tone (1050, .03, .015); });
+        make (UISounds::select, [] (Synth& s) { s.tone (520, .18, .07, false, 780); s.tone (1040, .14, .02, false, 1560, .01); });
+        make (UISounds::folder, [] (Synth& s) { s.tone (440, .11, .05, false, 590); s.tone (660, .13, .035, false, 0, .06); });
+        make (UISounds::back,   [] (Synth& s) { s.tone (590, .11, .045, false, 440); });
+        make (UISounds::open,   [] (Synth& s) { s.noise (.24, .045, 300, 1400); });
+        make (UISounds::close,  [] (Synth& s) { s.noise (.22, .035, 1300, 300); });
+        make (UISounds::search, [] (Synth& s) { s.tone (740, .09, .035, false, 1100); s.noise (.14, .015, 900, 1800); });
+        make (UISounds::pin,    [] (Synth& s) { s.tone (740, .11, .05); s.tone (1100, .18, .045, false, 0, .08); });
+        make (UISounds::clear,  [] (Synth& s) { s.tone (420, .15, .045, false, 300); });
+        make (UISounds::toggle, [] (Synth& s) { s.tone (1100, .05, .03); });
         make (UISounds::key1,     [] (Synth& s) { s.keyClick (1.00, 11); });
         make (UISounds::key2,     [] (Synth& s) { s.keyClick (0.94, 23, 0.046); });
         make (UISounds::key3,     [] (Synth& s) { s.keyClick (1.07, 37, 0.039); });
         make (UISounds::key4,     [] (Synth& s) { s.keyClick (0.98, 41, 0.044); });
-        make (UISounds::keySpace, [] (Synth& s) { s.keyClick (0.78, 53, 0.055); s.burst (0.0, 0.06, 0.03, 600.0, 0.8, 54); });
+        make (UISounds::keySpace, [] (Synth& s) { s.keyClick (0.78, 53, 0.055); s.burst (0.0, 0.05, 0.02, 420.0, 0.8, 54); });
         make (UISounds::keyBack,  [] (Synth& s) { s.keyClick (0.86, 67, 0.050); });
         return wavs;
     }
