@@ -55,7 +55,7 @@ public:
     juce::Array<Item> getRecents() const;
     void pushRecent (const Item&);
 
-    bool  soundEnabled = true;
+    bool  soundEnabled = false;   // off by default, toggle in the panel or the wheel
     bool  pickTracks   = false;
     void  savePrefs();
 
