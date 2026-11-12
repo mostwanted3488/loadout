@@ -98,7 +98,7 @@ LoadoutEditor::LoadoutEditor (LoadoutProcessor& p)
     proc.addChangeListener (this);
     proc.library->addChangeListener (this);
 
-    if (proc.library->known.getNumTypes() == 0 && ! proc.library->isScanning())
+    if (proc.library->getAllPlugins().isEmpty() && ! proc.library->isScanning())
         proc.library->startScan();
 
     refresh();

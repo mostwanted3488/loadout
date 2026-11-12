@@ -145,7 +145,11 @@ bool LoadoutProcessor::loadPlugin (const juce::PluginDescription& desc, juce::St
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    auto instance = library->formats.createPluginInstance (desc, currentRate, currentBlock, error);
+    auto real = library->resolve (desc, error);   // opens the plugin file the first time only
+    if (real == nullptr)
+        return false;
+
+    auto instance = library->formats.createPluginInstance (*real, currentRate, currentBlock, error);
     if (instance == nullptr)
         return false;
 
@@ -164,7 +168,7 @@ bool LoadoutProcessor::loadPlugin (const juce::PluginDescription& desc, juce::St
     {
         const juce::ScopedLock sl (hostedLock);
         std::swap (hosted, instance);
-        hostedDesc = desc;
+        hostedDesc = *real;
     }
 
     if (instance != nullptr)

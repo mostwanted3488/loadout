@@ -31,4 +31,5 @@ JUCE 8 is fetched automatically.
 
 ## Known limits
 - Instruments load fine, but FL only sends notes to mixer effects in some setups.
-- Plugin scanning happens inside the DAW; a crashing plugin is blacklisted on the next scan.
+- The wheel lists VST3 plugins. Plugins without a moduleinfo.json are listed by file name until you load them once
+  (then their real name, vendor and category are used).

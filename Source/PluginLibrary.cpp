@@ -6,36 +6,79 @@ class PluginLibrary::ScanThread : public juce::Thread
 public:
     explicit ScanThread (PluginLibrary& l) : juce::Thread ("LOADOUT plugin scan"), lib (l) {}
 
+    // Fast scan: lists VST3 files WITHOUT opening the plugins (no pop-ups, no waiting).
+    // Plugins that ship a moduleinfo.json give their real name/vendor/category instantly;
+    // the others are listed by file name and only opened the first time you load them.
     void run() override
     {
-        juce::Array<juce::AudioPluginFormat*> toScan;
+        juce::AudioPluginFormat* vst3 = nullptr;
         for (auto* f : lib.formats.getFormats())
-            if (f->canScanForPlugins() && (f->getName() == "VST3" || f->getName() == "AudioUnit"))
-                toScan.add (f);
+            if (f->getName() == "VST3")
+                vst3 = f;
 
-        for (int fi = 0; fi < toScan.size() && ! threadShouldExit(); ++fi)
+        juce::Array<juce::PluginDescription> found;
+
+        if (vst3 != nullptr)
         {
-            auto* fmt = toScan[fi];
-            juce::PluginDirectoryScanner scanner (lib.known, *fmt, fmt->getDefaultLocationsToSearch(),
-                                                  true, lib.pedalFile(), false);
-            juce::String name;
+            const auto files = vst3->searchPathsForPlugins (vst3->getDefaultLocationsToSearch(), true, false);
 
-            while (! threadShouldExit())
+            for (int i = 0; i < files.size() && ! threadShouldExit(); ++i)
             {
+                const auto& path = files[i];
+                const juce::File file (path);
                 {
                     const juce::ScopedLock sl (lib.statusLock);
-                    lib.currentlyScanning = scanner.getNextPluginFileThatWillBeScanned();
+                    lib.currentlyScanning = path;
                 }
+                lib.scanProgress = (float) i / (float) juce::jmax (1, files.size());
                 lib.triggerAsyncUpdate();
 
-                const bool more = scanner.scanNextFile (true, name);
-                lib.scanProgress = ((float) fi + scanner.getProgress()) / (float) juce::jmax (1, toScan.size());
+                const bool hasModuleInfo = file.getChildFile ("Contents").getChildFile ("Resources").getChildFile ("moduleinfo.json").existsAsFile()
+                                        || file.getChildFile ("Contents").getChildFile ("moduleinfo.json").existsAsFile();
+                const bool isShell = file.getFileName().containsIgnoreCase ("shell");
 
-                if (! more)
-                    break;
+                if (hasModuleInfo || isShell)
+                {
+                    juce::OwnedArray<juce::PluginDescription> types;
+                    vst3->findAllTypesForFile (types, path);   // moduleinfo = instant; shells (Waves) are opened once
+
+                    if (! types.isEmpty())
+                    {
+                        for (auto* t : types)
+                        {
+                            found.add (*t);
+                            lib.known.addType (*t);
+                        }
+                        continue;
+                    }
+                }
+
+                // already resolved earlier? reuse it
+                bool reused = false;
+                for (auto& t : lib.known.getTypes())
+                    if (t.fileOrIdentifier == path && t.pluginFormatName == "VST3")
+                    {
+                        found.add (t);
+                        reused = true;
+                    }
+                if (reused)
+                    continue;
+
+                juce::PluginDescription d;
+                d.pluginFormatName = "VST3";
+                d.fileOrIdentifier = path;
+                d.name = d.descriptiveName = file.getFileNameWithoutExtension();
+                d.version = "lazy";
+                d.lastFileModTime = file.getLastModificationTime();
+                found.add (d);
             }
         }
 
+        {
+            const juce::ScopedLock sl (lib.listLock);
+            lib.listed = found;
+        }
+        lib.saveList();
         lib.saveKnown();
         lib.scanProgress = 1.0f;
         lib.scanning = false;
@@ -53,8 +96,63 @@ PluginLibrary::Item PluginLibrary::Item::fromDescription (const juce::PluginDesc
     i.kind = Kind::plugin;
     i.name = d.name;
     i.sub  = d.manufacturerName;
-    i.id   = d.createIdentifierString();
+    i.id   = makeId (d);
     return i;
+}
+
+juce::String PluginLibrary::makeId (const juce::PluginDescription& d)
+{
+    return d.pluginFormatName + "|" + d.fileOrIdentifier + "|" + d.name;
+}
+
+std::unique_ptr<juce::PluginDescription> PluginLibrary::resolve (const juce::PluginDescription& d, juce::String& error)
+{
+    if (d.version != "lazy")
+        return std::make_unique<juce::PluginDescription> (d);
+
+    // opened before?
+    for (auto& t : known.getTypes())
+        if (t.fileOrIdentifier == d.fileOrIdentifier && t.pluginFormatName == d.pluginFormatName)
+            return std::make_unique<juce::PluginDescription> (t);
+
+    juce::AudioPluginFormat* fmt = nullptr;
+    for (auto* f : formats.getFormats())
+        if (f->getName() == d.pluginFormatName)
+            fmt = f;
+
+    if (fmt == nullptr)
+    {
+        error = "format not available";
+        return {};
+    }
+
+    juce::OwnedArray<juce::PluginDescription> types;
+    fmt->findAllTypesForFile (types, d.fileOrIdentifier);
+    if (types.isEmpty())
+    {
+        error = "couldn't open " + d.name;
+        return {};
+    }
+
+    for (auto* t : types)
+        known.addType (*t);
+    saveKnown();
+
+    // swap the lazy entry for the real one(s) so names/vendors/categories become accurate
+    {
+        const juce::ScopedLock sl (listLock);
+        for (int i = listed.size(); --i >= 0;)
+            if (listed.getReference (i).fileOrIdentifier == d.fileOrIdentifier)
+                listed.remove (i);
+        for (auto* t : types)
+            listed.add (*t);
+    }
+    saveList();
+
+    for (auto* t : types)
+        if (t->name.equalsIgnoreCase (d.name))
+            return std::make_unique<juce::PluginDescription> (*t);
+    return std::make_unique<juce::PluginDescription> (*types.getFirst());
 }
 
 PluginLibrary::PluginLibrary()
@@ -100,7 +198,10 @@ juce::String PluginLibrary::categoryOf (const juce::PluginDescription& d)
         return false;
     };
 
-    if (has ({ "synth", "instrument", "sampler", "generator", "musicdevice" }))           return "Instruments";
+    if (has ({ "synth", "instrument", "sampler", "generator", "musicdevice", "serum", "vital", "sylenth",
+               "massive", "omnisphere", "kontakt", "keyscape", "nexus", "spire", "diva", "pigments",
+               "phase plant", "analog lab", "labs", "sytrus", "flex", "piano", "keys", "rhodes",
+               "string", "orchestra", "drum", "808", "bass station", "arturia" }))           return "Instruments";
     if (has ({ "eq", "equaliz", "filter" }))                                               return "EQ";
     if (has ({ "dynamic", "compress", "limit", "gate", "clip", "expander", "transient",
                "ott", "de-ess", "deess", "maxim" }))                                       return "Dynamics";
@@ -116,7 +217,11 @@ juce::String PluginLibrary::categoryOf (const juce::PluginDescription& d)
 
 juce::Array<juce::PluginDescription> PluginLibrary::getAllPlugins() const
 {
-    auto types = known.getTypes();
+    juce::Array<juce::PluginDescription> types;
+    {
+        const juce::ScopedLock sl (listLock);
+        types = listed;
+    }
     juce::Array<juce::PluginDescription> out;
     juce::StringArray seen;
 
@@ -211,7 +316,13 @@ juce::Array<PluginLibrary::Item> PluginLibrary::search (const juce::String& rawQ
 
 std::unique_ptr<juce::PluginDescription> PluginLibrary::findById (const juce::String& id) const
 {
-    return known.getTypeForIdentifierString (id);
+    {
+        const juce::ScopedLock sl (listLock);
+        for (auto& d : listed)
+            if (makeId (d) == id)
+                return std::make_unique<juce::PluginDescription> (d);
+    }
+    return known.getTypeForIdentifierString (id);   // ids saved by older versions
 }
 
 //==============================================================================
@@ -299,7 +410,7 @@ juce::String PluginLibrary::getScanStatus() const
     }
 
     const auto n = getAllPlugins().size();
-    return n == 0 ? juce::String ("No plugins yet - click Scan")
+    return n == 0 ? juce::String ("No plugins yet - click Rescan")
                   : juce::String (n) + " plugins";
 }
 
@@ -336,8 +447,13 @@ void PluginLibrary::loadAll()
     if (auto xml = juce::parseXML (knownFile()))
         known.recreateFromXml (*xml);
 
-    // anything that crashed during a previous scan gets blacklisted
-    juce::PluginDirectoryScanner::applyBlacklistingsFromDeadMansPedal (known, pedalFile());
+    if (auto xml = juce::parseXML (listFile()))
+        for (auto* e : xml->getChildIterator())
+        {
+            juce::PluginDescription d;
+            if (d.loadFromXml (*e))
+                listed.add (d);
+        }
 
     const auto json = juce::JSON::parse (slotsFile());
     if (auto* arr = json["slots"].getArray(); arr != nullptr && arr->size() == numSlots)
@@ -366,6 +482,18 @@ void PluginLibrary::saveKnown()
 {
     if (auto xml = known.createXml())
         xml->writeTo (knownFile());
+}
+
+void PluginLibrary::saveList()
+{
+    juce::XmlElement root ("LOADOUT_PLUGINS");
+    {
+        const juce::ScopedLock sl (listLock);
+        for (auto& d : listed)
+            if (auto e = d.createXml())
+                root.addChildElement (e.release());
+    }
+    root.writeTo (listFile());
 }
 
 void PluginLibrary::saveWheel()

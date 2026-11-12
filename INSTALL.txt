@@ -21,7 +21,8 @@ Windows
 Use
 ---
 - Put LOADOUT on a mixer insert, open it, press "Open wheel" (or Tab).
-- First launch scans your plugins (can take a minute). "Rescan plugins" to update.
+- First launch lists your VST3 plugins in a few seconds, without opening them (no pop-ups).
+  A plugin is only opened the first time you load it from the wheel. "Rescan plugins" after installing new ones.
 - Wheel: hover + click, 1-0 for slots, type to search, scroll for pages,
   drag a plugin onto a slot to pin it, right-click a slot to clear it, Tab/Esc to close.
 - "Send to: Pick tracks" lets you send the chosen plugin to any track that has a LOADOUT on it

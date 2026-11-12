@@ -37,7 +37,14 @@ public:
 
     //==============================================================================
     juce::AudioPluginFormatManager formats;
-    juce::KnownPluginList known;
+    juce::KnownPluginList known;   // fully resolved descriptions (cache used to load plugins)
+
+    /** Our stable id for a listed plugin (format | file | name). */
+    static juce::String makeId (const juce::PluginDescription&);
+
+    /** Turns a "lazy" listing (file only, never opened) into a real description.
+        Opens that one plugin file the first time - message thread. */
+    std::unique_ptr<juce::PluginDescription> resolve (const juce::PluginDescription&, juce::String& error);
 
     juce::Array<juce::PluginDescription> getAllPlugins() const;
     juce::Array<Item> getFolderContents (const juce::String& folder) const;
@@ -78,6 +85,11 @@ private:
 
     juce::File dataDir;
     juce::File knownFile()  const { return dataDir.getChildFile ("plugins.xml"); }
+    juce::File listFile()   const { return dataDir.getChildFile ("plugin-list.xml"); }
+
+    juce::Array<juce::PluginDescription> listed;   // what the wheel shows (fast scan)
+    mutable juce::CriticalSection listLock;
+    void saveList();
     juce::File slotsFile()  const { return dataDir.getChildFile ("wheel.json"); }
     juce::File pedalFile()  const { return dataDir.getChildFile ("scan-in-progress.txt"); }
 
