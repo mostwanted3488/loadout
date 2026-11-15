@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <map>
 
 /** UTF-8 literal helper (keeps MSVC + juce::String happy with non-ASCII characters). */
 inline juce::String U (const char* utf8) { return juce::String::fromUTF8 (utf8); }
@@ -51,6 +52,13 @@ public:
     juce::Array<Item> search (const juce::String& query, int maxResults) const;
     std::unique_ptr<juce::PluginDescription> findById (const juce::String& id) const;
 
+    /** The FL Studio plugin-database file (.fst) for a plugin - dropping it on a mixer slot
+        in FL loads the plugin there as a normal effect. Invalid File if not found. */
+    juce::File findFst (const juce::String& pluginName, bool instrument);
+    juce::File findFst (const Item&);
+    static bool isFLOnly (const juce::PluginDescription& d)   { return d.pluginFormatName == "FL"; }
+    void buildFstIndex();
+
     static juce::StringArray getFolderNames();
     static juce::String categoryOf (const juce::PluginDescription&);
 
@@ -90,6 +98,12 @@ private:
     juce::Array<juce::PluginDescription> listed;   // what the wheel shows (fast scan)
     mutable juce::CriticalSection listLock;
     void saveList();
+
+    // FL Studio plugin database (.fst files)
+    std::map<juce::String, juce::File> fstEffects, fstGenerators;
+    juce::Array<juce::PluginDescription> flOnly;   // native FL / VST2 / AU entries (drag-only)
+    juce::CriticalSection fstLock;
+    static juce::String norm (const juce::String&);
     static juce::Array<juce::PluginDescription> readModuleInfo (const juce::File& bundle);
     juce::File slotsFile()  const { return dataDir.getChildFile ("wheel.json"); }
     juce::File pedalFile()  const { return dataDir.getChildFile ("scan-in-progress.txt"); }

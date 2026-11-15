@@ -19,6 +19,8 @@ Install steps are in `INSTALL.txt`.
   mouse-following highlight). On macOS this needs Screen Recording permission for the DAW.
 - 10 slots (1–0): folders auto-filled from your scanned plugins (EQ, Dynamics, Reverb & Delay,
   Instruments, Distortion, Modulation, Utility, Other) + your pinned favourites.
+- Drag a plugin out of the wheel and drop it on any FL mixer slot: it loads there as a normal
+  effect (LOADOUT drags FL's own plugin-database .fst file). Native FL plugins are listed too.
 - Recents, drag-to-pin, UI sounds, and "Send to: Pick tracks" to load a plugin on any track that
   has a LOADOUT (all instances in the project see each other).
 

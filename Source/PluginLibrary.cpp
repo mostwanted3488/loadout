@@ -17,6 +17,7 @@ public:
                 vst3 = f;
 
         juce::Array<juce::PluginDescription> found;
+        lib.buildFstIndex();
 
         if (vst3 != nullptr)
         {
@@ -79,6 +80,103 @@ private:
 };
 
 //==============================================================================
+juce::String PluginLibrary::norm (const juce::String& s)
+{
+    return s.toLowerCase().retainCharacters ("abcdefghijklmnopqrstuvwxyz0123456789");
+}
+
+void PluginLibrary::buildFstIndex()
+{
+    // FL keeps one .fst per plugin in  Documents/Image-Line/FL Studio*/Presets/Plugin database
+    juce::Array<juce::File> roots;
+    const auto imageLine = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Image-Line");
+    for (auto& d : imageLine.findChildFiles (juce::File::findDirectories, false, "FL Studio*"))
+        if (auto db = d.getChildFile ("Presets").getChildFile ("Plugin database"); db.isDirectory())
+            roots.add (db);
+
+    std::map<juce::String, juce::File> fx, gen;
+    juce::Array<juce::PluginDescription> entries;
+    juce::StringArray seen;
+
+    for (auto& root : roots)
+    {
+        auto files = root.findChildFiles (juce::File::findFiles, true, "*.fst");
+        // entries under "Installed" first (that's where FL lists every detected plugin)
+        std::stable_sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+        {
+            return a.getFullPathName().contains ("Installed") && ! b.getFullPathName().contains ("Installed");
+        });
+
+        for (auto& f : files)
+        {
+            const auto path = f.getFullPathName();
+            const bool isGen = path.contains ("Generators");
+            const auto key = norm (f.getFileNameWithoutExtension());
+            if (key.isEmpty())
+                continue;
+
+            auto& map = isGen ? gen : fx;
+            if (map.find (key) == map.end())
+                map[key] = f;
+
+            const auto uniq = juce::String (isGen ? "g" : "e") + key;
+            if (seen.contains (uniq))
+                continue;
+            seen.add (uniq);
+
+            juce::PluginDescription d;
+            d.pluginFormatName = "FL";
+            d.fileOrIdentifier = path;
+            d.name = d.descriptiveName = f.getFileNameWithoutExtension();
+            d.manufacturerName = "FL Studio";
+            d.category = f.getParentDirectory().getFileName();
+            d.isInstrument = isGen;
+            entries.add (d);
+        }
+    }
+
+    const juce::ScopedLock sl (fstLock);
+    fstEffects = std::move (fx);
+    fstGenerators = std::move (gen);
+    flOnly = entries;
+}
+
+juce::File PluginLibrary::findFst (const juce::String& pluginName, bool instrument)
+{
+    const auto key = norm (pluginName);
+    if (key.isEmpty())
+        return {};
+
+    const juce::ScopedLock sl (fstLock);
+    auto& first  = instrument ? fstGenerators : fstEffects;
+    auto& second = instrument ? fstEffects : fstGenerators;
+
+    for (auto* m : { &first, &second })
+        if (auto it = m->find (key); it != m->end())
+            return it->second;
+
+    // fuzzy: FL sometimes prefixes the vendor ("FabFilter Pro-Q 4")
+    for (auto* m : { &first, &second })
+        for (auto& [k, f] : *m)
+            if (k.endsWith (key) || key.endsWith (k))
+                return f;
+    return {};
+}
+
+juce::File PluginLibrary::findFst (const Item& item)
+{
+    if (! item.isPlugin())
+        return {};
+
+    if (auto d = findById (item.id))
+    {
+        if (isFLOnly (*d))
+            return juce::File (d->fileOrIdentifier);
+        return findFst (d->name, d->isInstrument || categoryOf (*d) == "Instruments");
+    }
+    return findFst (item.name, false);
+}
+
 juce::Array<juce::PluginDescription> PluginLibrary::readModuleInfo (const juce::File& bundle)
 {
     juce::Array<juce::PluginDescription> out;
@@ -179,6 +277,12 @@ juce::String PluginLibrary::makeId (const juce::PluginDescription& d)
 
 std::unique_ptr<juce::PluginDescription> PluginLibrary::resolve (const juce::PluginDescription& d, juce::String& error)
 {
+    if (isFLOnly (d))
+    {
+        error = d.name + " is an FL plugin: drag it out of the wheel onto a mixer slot";
+        return {};
+    }
+
     if (d.version != "lazy")
         return std::make_unique<juce::PluginDescription> (d);
 
@@ -257,6 +361,7 @@ PluginLibrary::PluginLibrary()
     dataDir.createDirectory();
 
     loadAll();
+    buildFstIndex();
 }
 
 PluginLibrary::~PluginLibrary()
@@ -331,6 +436,23 @@ juce::Array<juce::PluginDescription> PluginLibrary::getAllPlugins() const
 
         seen.add (key);
         out.add (d);
+    }
+
+    // native FL plugins (and anything only FL knows) - these are drag-only
+    {
+        juce::StringArray names;
+        for (auto& d : out)
+            names.add (norm (d.name));
+
+        const juce::ScopedLock sl (fstLock);
+        for (auto& d : flOnly)
+        {
+            const auto k = norm (d.name);
+            if (names.contains (k))
+                continue;
+            names.add (k);
+            out.add (d);
+        }
     }
 
     std::sort (out.begin(), out.end(), [] (const auto& a, const auto& b)
@@ -408,6 +530,12 @@ std::unique_ptr<juce::PluginDescription> PluginLibrary::findById (const juce::St
     {
         const juce::ScopedLock sl (listLock);
         for (auto& d : listed)
+            if (makeId (d) == id)
+                return std::make_unique<juce::PluginDescription> (d);
+    }
+    {
+        const juce::ScopedLock sl (fstLock);
+        for (auto& d : flOnly)
             if (makeId (d) == id)
                 return std::make_unique<juce::PluginDescription> (d);
     }

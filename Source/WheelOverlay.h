@@ -93,7 +93,8 @@ private:
     // drag & drop
     struct Pending { int seg = -1; Item item; juce::Point<float> start; bool active = false; };
     Pending pending;
-    bool dragging = false;
+    bool dragging = false, externalStarted = false, fstWarned = false;
+    float dragStartR = 0.0f;
     Item dragItem;
     juce::Point<float> mousePos { -9999.0f, -9999.0f };
 
@@ -144,6 +145,7 @@ private:
     void runSearch();
     void startDrag (const Item&);
     void endDrag (bool drop);
+    void tryExternalDrag();
     void clearSlot (int);
     void openPicker (const Item&);
     void closePicker();

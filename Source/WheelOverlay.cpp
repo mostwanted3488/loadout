@@ -571,6 +571,13 @@ void WheelOverlay::choose (const Item& it)
     if (! it.isPlugin())
         return;
 
+    if (auto d = lib->findById (it.id); d != nullptr && PluginLibrary::isFLOnly (*d))
+    {
+        toast ("Drag it", it.name + U (" \xe2\x80\x94 drag it out of the wheel onto a mixer slot"));
+        sound (UISounds::clear);
+        return;
+    }
+
     if (searching)
         closeSearch (true);
 
@@ -644,6 +651,54 @@ void WheelOverlay::endDrag (bool drop)
         closeSearch (true);
     hover = -1;
     contentChanged();
+}
+
+void WheelOverlay::tryExternalDrag()
+{
+    const auto fst = lib->findFst (dragItem);
+    if (! fst.existsAsFile())
+    {
+        if (! fstWarned)
+        {
+            toast ("Not in FL", dragItem.name + " isn't in FL's plugin database - scan it in FL first");
+            fstWarned = true;
+        }
+        return;
+    }
+
+    externalStarted = true;
+    const auto item = dragItem;
+
+    const bool started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
+        { fst.getFullPathName() }, false, this,
+        [] { juce::MessageManager::callAsync ([] { currentOverlay().reset(); }); });
+
+    if (! started)
+    {
+        externalStarted = false;
+        toast ("Drag failed", "couldn't start the drag");
+        return;
+    }
+
+    lib->pushRecent (item);
+    sound (UISounds::select);
+    dragging = false;
+    stopTimer();
+
+    // get out of the way so FL receives the drop
+    juce::Component::SafePointer<WheelOverlay> safe (this);
+    juce::Timer::callAfterDelay (40, [safe]
+    {
+        if (safe != nullptr)
+            safe->setVisible (false);
+    });
+
+    // safety net: never leave an invisible overlay around
+    juce::Timer::callAfterDelay (60000, [safe]
+    {
+        if (safe != nullptr && currentOverlay().get() == safe.getComponent())
+            currentOverlay().reset();
+    });
 }
 
 void WheelOverlay::clearSlot (int i)
@@ -814,17 +869,31 @@ void WheelOverlay::mouseDrag (const juce::MouseEvent& e)
     mousePos = e.position;
     if (pending.active && ! dragging && e.position.getDistanceFrom (pending.start) > 7.0f)
     {
-        if (pending.item.isPlugin()) startDrag (pending.item);
-        else                         pending.active = false;
+        if (pending.item.isPlugin())
+        {
+            dragStartR = toDesign (pending.start).getDistanceFromOrigin();
+            startDrag (pending.item);
+        }
+        else pending.active = false;
     }
     if (dragging)
         needsRepaint = true;
     updateHover (e.position);
+
+    // dragged out of the wheel -> real OS drag of FL's .fst so it can be dropped on a mixer slot
+    if (dragging && ! externalStarted)
+    {
+        const float r = toDesign (e.position).getDistanceFromOrigin();
+        if (r > RO + 40.0f && r > dragStartR + 30.0f)
+            tryExternalDrag();
+    }
 }
 
 void WheelOverlay::mouseUp (const juce::MouseEvent& e)
 {
     mousePos = e.position;
+    if (externalStarted)
+        return;
     if (dragging)
     {
         endDrag (true);
@@ -1075,7 +1144,7 @@ void WheelOverlay::layout()
 
     // help pill
     {
-        const float w = 560.0f;
+        const float w = 640.0f;
         addGlass ({ bounds.getCentreX() - w * 0.5f, bounds.getBottom() - 46.0f, w, 30.0f }, 15.0f, a);
     }
 
@@ -1235,7 +1304,7 @@ void WheelOverlay::paint (juce::Graphics& g)
         if (dragging)
         {
             g.setFont (font (10.0f * sc, false));
-            shadowText (g, "Esc to cancel", { c.x - 80.0f * sc, c.y + 22.0f * sc, 160.0f * sc, 16.0f * sc }, juce::Justification::centred, white.withAlpha (0.7f * btnA));
+            shadowText (g, "or drag out to drop in FL", { c.x - 80.0f * sc, c.y + 22.0f * sc, 160.0f * sc, 16.0f * sc }, juce::Justification::centred, white.withAlpha (0.7f * btnA));
         }
     }
 
@@ -1311,7 +1380,7 @@ void WheelOverlay::paint (juce::Graphics& g)
     // --- help pill
     {
         const juce::StringArray keys  { "TAB", U ("1\xe2\x80\x93" "0"), U ("A\xe2\x80\x93Z"), "drag", "right-click", "scroll" };
-        const juce::StringArray words { "close", "slots", "search", "pin", "clear / back", "pages" };
+        const juce::StringArray words { "close", "slots", "search", "pin / drop in FL", "clear / back", "pages" };
         const auto fb = font (11.0f), fr = font (11.0f, false);
         float total = 0.0f;
         for (int i = 0; i < keys.size(); ++i)
