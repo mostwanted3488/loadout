@@ -83,8 +83,31 @@ in vec2 a;
 void main() { gl_Position = vec4 (a, 0.0, 1.0); }
 )";
 
+    // separable gaussian, run once when the wheel opens (quarter resolution)
+    const char* blurFragmentShader = R"(#version 150
+uniform sampler2D uSrc;
+uniform vec2 uSize;
+uniform vec2 uDir;
+uniform float uLod;
+out vec4 fragColour;
+void main()
+{
+    vec2 uv = gl_FragCoord.xy / uSize;
+    vec2 d = uDir / uSize;
+    float w[5] = float[] (0.2270270, 0.1945946, 0.1216216, 0.0540541, 0.0162162);
+    vec3 c = textureLod (uSrc, uv, uLod).rgb * w[0];
+    for (int i = 1; i < 5; i++)
+    {
+        c += textureLod (uSrc, uv + d * float (i) * 1.5, uLod).rgb * w[i];
+        c += textureLod (uSrc, uv - d * float (i) * 1.5, uLod).rgb * w[i];
+    }
+    fragColour = vec4 (c, 1.0);
+}
+)";
+
     const char* fragmentShader = R"(#version 150
 uniform sampler2D uTex;
+uniform sampler2D uBlur;
 uniform vec2 uRes;
 uniform float uDpr;
 uniform vec2 uC;
@@ -149,17 +172,7 @@ float rbox (vec2 p, vec4 r, float rad)
     return length (max (d, 0.0)) + min (max (d.x, d.y), 0.0) - rad;
 }
 
-vec3 blurS (vec2 uv)
-{
-    vec3 s = vec3 (0.0);
-    vec2 px = 1.0 / uRes;
-    for (int i = 0; i < 8; i++)
-    {
-        float a = float (i) * 2.39996 + 0.5, r = sqrt (float (i) + 0.5) / 2.83;
-        s += textureLod (uTex, uv + vec2 (cos (a), sin (a)) * r * 11.0 * px, 2.2).rgb;
-    }
-    return s / 8.0;
-}
+vec3 blurS (vec2 uv) { return texture (uBlur, uv).rgb; }
 
 vec3 shade (vec2 p, vec2 uv, float dpx, vec2 n, float tint, float em, float bevel, float refr, float dark)
 {
@@ -307,7 +320,7 @@ WheelOverlay::WheelOverlay (LoadoutProcessor& o, juce::Image img, juce::Rectangl
     gl.setOpenGLVersionRequired (juce::OpenGLContext::openGL3_2);
     gl.setRenderer (this);
     gl.setComponentPaintingEnabled (true);
-    gl.setContinuousRepainting (true);
+    gl.setContinuousRepainting (false);
     gl.attachTo (*this);
 
     setBounds (area);
@@ -362,6 +375,63 @@ void WheelOverlay::newOpenGLContextCreated()
     glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glGenerateMipmap (GL_TEXTURE_2D);
     glBindTexture (GL_TEXTURE_2D, 0);
+
+    buildBlur();
+}
+
+void WheelOverlay::buildBlur()
+{
+    blurReady = false;
+    blurShader = std::make_unique<juce::OpenGLShaderProgram> (gl);
+    if (! blurShader->addVertexShader (vertexShader) || ! blurShader->addFragmentShader (blurFragmentShader) || ! blurShader->link())
+    {
+        blurShader.reset();
+        return;
+    }
+
+    const int bw = juce::jmax (8, snapshot.getWidth() / 4);
+    const int bh = juce::jmax (8, snapshot.getHeight() / 4);
+    if (! blurA.initialise (gl, bw, bh) || ! blurB.initialise (gl, bw, bh))
+        return;
+
+    const auto prog = blurShader->getProgramID();
+    auto pass = [&] (juce::OpenGLFrameBuffer& target, GLuint source, float dx, float dy, float lod)
+    {
+        target.makeCurrentRenderingTarget();
+        glViewport (0, 0, bw, bh);
+        glDisable (GL_BLEND);
+        blurShader->use();
+        glActiveTexture (GL_TEXTURE0);
+        glBindTexture (GL_TEXTURE_2D, source);
+        glUniform1i (glGetUniformLocation (prog, "uSrc"), 0);
+        glUniform2f (glGetUniformLocation (prog, "uSize"), (GLfloat) bw, (GLfloat) bh);
+        glUniform2f (glGetUniformLocation (prog, "uDir"), dx, dy);
+        glUniform1f (glGetUniformLocation (prog, "uLod"), lod);
+        glBindVertexArray (vao);
+        glBindBuffer (GL_ARRAY_BUFFER, vbo);
+        const auto attr = (GLuint) glGetAttribLocation (prog, "a");
+        glEnableVertexAttribArray (attr);
+        glVertexAttribPointer (attr, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        glDisableVertexAttribArray (attr);
+        glBindBuffer (GL_ARRAY_BUFFER, 0);
+        target.releaseAsRenderingTarget();
+    };
+
+    // capture (mip level 2 = quarter size) -> H -> V -> H -> V
+    pass (blurA, tex, 1.0f, 0.0f, 2.0f);
+    pass (blurB, blurA.getTextureID(), 0.0f, 1.0f, 0.0f);
+    pass (blurA, blurB.getTextureID(), 1.0f, 0.0f, 0.0f);
+    pass (blurB, blurA.getTextureID(), 0.0f, 1.0f, 0.0f);
+
+    glBindTexture (GL_TEXTURE_2D, blurB.getTextureID());
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture (GL_TEXTURE_2D, 0);
+    glUseProgram (0);
+    blurReady = true;
 }
 
 void WheelOverlay::openGLContextClosing()
@@ -370,6 +440,10 @@ void WheelOverlay::openGLContextClosing()
     if (vbo != 0) glDeleteBuffers (1, &vbo);
     if (vao != 0) glDeleteVertexArrays (1, &vao);
     tex = vbo = vao = 0;
+    blurA.release();
+    blurB.release();
+    blurShader.reset();
+    blurReady = false;
     shader.reset();
 }
 
@@ -389,6 +463,12 @@ void WheelOverlay::renderOpenGL()
     const auto prog = shader->getProgramID();
     auto loc = [prog] (const char* name) { return glGetUniformLocation (prog, name); };
 
+    const auto rs = gl.getRenderingScale();
+    glViewport (0, 0, juce::roundToInt (u.w * rs), juce::roundToInt (u.h * rs));
+
+    glActiveTexture (GL_TEXTURE1);
+    glBindTexture (GL_TEXTURE_2D, blurReady ? blurB.getTextureID() : tex);
+    glUniform1i (loc ("uBlur"), 1);
     glActiveTexture (GL_TEXTURE0);
     glBindTexture (GL_TEXTURE_2D, tex);
     glUniform1i (loc ("uTex"), 0);
@@ -415,11 +495,23 @@ void WheelOverlay::renderOpenGL()
     glDrawArrays (GL_TRIANGLES, 0, 3);
     glDisableVertexAttribArray (attr);
     glBindBuffer (GL_ARRAY_BUFFER, 0);
+    glActiveTexture (GL_TEXTURE1);
+    glBindTexture (GL_TEXTURE_2D, 0);
+    glActiveTexture (GL_TEXTURE0);
     glBindTexture (GL_TEXTURE_2D, 0);
     glUseProgram (0);
 }
 
 //==============================================================================
+juce::Rectangle<int> WheelOverlay::wheelArea() const
+{
+    const auto c = centre();
+    const float sc = wheelScale();
+    const float half = 300.0f * sc + 40.0f;
+    return juce::Rectangle<float> (c.x - half, c.y - 260.0f * sc - 60.0f, half * 2.0f, 260.0f * sc + 60.0f + 290.0f * sc + 20.0f)
+             .getSmallestIntegerContainer();
+}
+
 float WheelOverlay::wheelScale() const
 {
     return juce::jmin (1.0f, ((float) getHeight() - 130.0f) / 520.0f, ((float) getWidth() - 24.0f) / 520.0f);
@@ -484,14 +576,15 @@ void WheelOverlay::setHover (int i)
     {
         hover = i;
         if (i >= 0) sound (UISounds::tick);
-        needsRepaint = true;
+        wheelDirty = true;
     }
 }
 
 void WheelOverlay::contentChanged()
 {
     labelA = 0.0f;
-    needsRepaint = true;
+    wheelDirty = true;
+    needsRepaint = true;   // crumb / page pill may appear or vanish
 }
 
 void WheelOverlay::sound (UISounds::Sound s)
@@ -1124,11 +1217,24 @@ void WheelOverlay::timerCallback()
     }
 
     const bool toastVisible = juce::Time::getMillisecondCounterHiRes() < toastUntil + 300.0;
-    if (needsRepaint || motion > 0.0005f || toastVisible || searching)
-    {
-        needsRepaint = false;
+    const bool animating = motion > 0.0005f;
+
+    // only redraw what changed: text layer for the wheel area, GL when anything moves
+    if (needsRepaint || dragging || pickerOpen)
         repaint();
+    else
+    {
+        if (animating || searching || wheelDirty) repaint (wheelArea());
+        if (toastVisible) repaint (getLocalBounds().removeFromTop (90));
     }
+
+    if (needsRepaint || dragging || pickerOpen || animating || searching || wheelDirty || toastVisible
+         || mousePos.getDistanceFrom (lastGLMouse) > 0.5f)
+        gl.triggerRepaint();
+
+    lastGLMouse = mousePos;
+    needsRepaint = false;
+    wheelDirty = false;
 }
 
 //==============================================================================

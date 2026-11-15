@@ -77,6 +77,10 @@ private:
     juce::OpenGLContext gl;
     std::unique_ptr<juce::OpenGLShaderProgram> shader;
     juce::uint32 vao = 0, vbo = 0, tex = 0;
+    std::unique_ptr<juce::OpenGLShaderProgram> blurShader;
+    juce::OpenGLFrameBuffer blurA, blurB;   // pre-blurred copy of the screen capture (computed once)
+    bool blurReady = false;
+    void buildBlur();
     juce::SpinLock uniformLock;
     Uniforms uniforms;
 
@@ -109,7 +113,9 @@ private:
     float M = 0, MV = 0, press = 0, openA = 0;
     bool closing = false, openPluginAfterClose = false;
     float labelA = 1.0f;   // label fade when the wheel content changes
-    bool needsRepaint = true;
+    bool needsRepaint = true, wheelDirty = true;
+    juce::Point<float> lastGLMouse;
+    juce::Rectangle<int> wheelArea() const;
 
     juce::String toastText, toastLabel;
     double toastUntil = 0;
