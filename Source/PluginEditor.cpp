@@ -1,6 +1,5 @@
 #include "PluginEditor.h"
 #include "WheelOverlay.h"
-#include "Platform.h"
 
 namespace
 {
@@ -111,45 +110,8 @@ LoadoutEditor::LoadoutEditor (LoadoutProcessor& p)
     juce::Component::SafePointer<LoadoutEditor> safe (this);
     juce::Timer::callAfterDelay (180, [safe]
     {
-        if (safe == nullptr || ! safe->isShowing() || WheelOverlay::isOpen())
-            return;
-
-        // hide the small LOADOUT window so only the wheel is visible (and it's not in the capture)
-        safe->hostHidden = Platform::hideHostWindow (*safe);
-        juce::Timer::callAfterDelay (safe->hostHidden ? 80 : 0, [safe]
-        {
-            if (safe != nullptr && ! WheelOverlay::isOpen())
-                WheelOverlay::open (safe->proc);
-        });
-    });
-}
-
-void LoadoutEditor::wheelClosed (bool showOptions)
-{
-    if (! hostHidden)
-    {
-        if (showOptions)
-        {
-            setOptionsVisible (true);
-            if (auto* top = getTopLevelComponent()) top->toFront (true);
-        }
-        return;
-    }
-
-    hostHidden = false;
-    if (showOptions)
-    {
-        setOptionsVisible (true);
-        Platform::showHostWindow (*this);
-        return;
-    }
-
-    // close the DAW's plugin window like its close button would (async: the host may delete us)
-    juce::Component::SafePointer<LoadoutEditor> safe (this);
-    juce::MessageManager::callAsync ([safe]
-    {
-        if (safe != nullptr)
-            Platform::closeHostWindow (*safe);
+        if (safe != nullptr && safe->isShowing() && ! WheelOverlay::isOpen())
+            WheelOverlay::open (safe->proc);
     });
 }
 

@@ -7,12 +7,6 @@ namespace Platform
         The callback always fires on the message thread; the image is invalid if the
         capture failed or screen-recording permission was refused. */
     void captureScreen (juce::Rectangle<int> logicalArea, std::function<void (juce::Image)> callback);
-
-    /** The DAW window that holds our editor: hide it, bring it back, or close it like its own
-        close button would. Only implemented where it is safe (macOS); returns false otherwise. */
-    bool hideHostWindow  (juce::Component& editor);
-    void showHostWindow  (juce::Component& editor);
-    void closeHostWindow (juce::Component& editor);
 }
 
 //==============================================================================

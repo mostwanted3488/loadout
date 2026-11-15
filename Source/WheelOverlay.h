@@ -111,7 +111,7 @@ private:
     // animation
     float H[N] {}, HV[N] {}, E[N] {};
     float M = 0, MV = 0, press = 0, openA = 0;
-    bool closing = false, openPluginAfterClose = false, optionsRequested = false;
+    bool closing = false, openPluginAfterClose = false;
     float labelA = 1.0f;   // label fade when the wheel content changes
     bool needsRepaint = true, wheelDirty = true;
     juce::Point<float> lastGLMouse;
