@@ -20,13 +20,15 @@ Windows
 
 Use
 ---
-- Put LOADOUT on a mixer insert, open it, press "Open wheel" (or Tab).
+- Put LOADOUT on a mixer insert and open it: the wheel opens straight away.
+  Settings are behind "Options" (in the wheel, bottom right, or on the small LOADOUT bar).
 - First launch lists your VST3 plugins in a few seconds, without opening them (no pop-ups).
   A plugin is only opened the first time you load it from the wheel. "Rescan plugins" after installing new ones.
 - Wheel: hover + click, 1-0 for slots, type to search, scroll for pages,
   drag a plugin onto a slot to pin it, right-click a slot to clear it, Tab/Esc to close.
 - Drop as a NORMAL FL effect: grab a plugin in the wheel and drag it OUT of the wheel -
-  the wheel disappears, drop it on any mixer slot in FL. (Uses FL's own plugin database,
+  the wheel disappears, drop it on any mixer slot in FL, and the wheel comes back so you
+  can drag the next one. (Uses FL's own plugin database,
   so the plugin must be scanned in FL: Options > Manage plugins.) Native FL plugins
   (Fruity...) are listed too and work this way.
 - "Send to: Pick tracks" lets you send the chosen plugin to any track that has a LOADOUT on it

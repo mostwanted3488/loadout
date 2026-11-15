@@ -55,10 +55,12 @@ LoadoutEditor::LoadoutEditor (LoadoutProcessor& p)
 {
     setLookAndFeel (&look);
 
-    openWheel.setButtonText ("Open wheel   (Tab)");
+    openWheel.setButtonText ("Open wheel");
     openWheel.getProperties().set ("main", true);
     openWheel.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff111111));
     openWheel.onClick = [this] { WheelOverlay::open (proc); };
+
+    optionsButton.onClick = [this] { setOptionsVisible (! optionsVisible); };
 
     showPlugin.setButtonText ("Show plugin");
     showPlugin.onClick = [this] { proc.showPluginWindow(); };
@@ -89,11 +91,11 @@ LoadoutEditor::LoadoutEditor (LoadoutProcessor& p)
     nameEditor.onTextChange = [this] { proc.setCustomName (nameEditor.getText()); };
     nameEditor.onReturnKey  = [this] { grabKeyboardFocus(); };
 
-    for (auto* c : std::initializer_list<juce::Component*> { &openWheel, &showPlugin, &removePlugin, &sendMode, &soundToggle, &scan, &nameEditor })
-        addAndMakeVisible (c);
+    for (auto* c : std::initializer_list<juce::Component*> { &openWheel, &optionsButton, &showPlugin, &removePlugin, &sendMode, &soundToggle, &scan, &nameEditor })
+        addChildComponent (c);
 
     setWantsKeyboardFocus (true);
-    setSize (460, 300);
+    setOptionsVisible (false);
 
     proc.addChangeListener (this);
     proc.library->addChangeListener (this);
@@ -103,6 +105,30 @@ LoadoutEditor::LoadoutEditor (LoadoutProcessor& p)
 
     refresh();
     startTimerHz (4);
+
+    // opening LOADOUT opens the wheel straight away (options stay behind the Options button)
+    juce::Component::SafePointer<LoadoutEditor> safe (this);
+    juce::Timer::callAfterDelay (180, [safe]
+    {
+        if (safe != nullptr && safe->isShowing() && ! WheelOverlay::isOpen())
+            WheelOverlay::open (safe->proc);
+    });
+}
+
+void LoadoutEditor::setOptionsVisible (bool shouldShow)
+{
+    optionsVisible = shouldShow;
+    optionsButton.setButtonText (optionsVisible ? "Hide options" : "Options");
+
+    for (auto* c : std::initializer_list<juce::Component*> { &showPlugin, &removePlugin, &sendMode, &soundToggle, &scan, &nameEditor })
+        c->setVisible (optionsVisible);
+    openWheel.setVisible (true);
+    optionsButton.setVisible (true);
+
+    if (optionsVisible) setSize (460, 300);
+    else                setSize (400, 92);
+    resized();
+    repaint();
 }
 
 LoadoutEditor::~LoadoutEditor()
@@ -160,6 +186,22 @@ void LoadoutEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colours::white.withAlpha (0.16f));
     g.drawRoundedRectangle (card.reduced (0.5f), 20.0f, 1.0f);
 
+    if (! optionsVisible)
+    {
+        g.setColour (juce::Colours::white);
+        g.setFont (font (16.0f));
+        g.drawText ("LOADOUT", juce::Rectangle<float> (card.getX() + 18, card.getY() + 10, 160, 22), juce::Justification::centredLeft);
+        const auto loadedName = proc.getLoadedName();
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.setFont (font (11.0f, false));
+        g.drawText (loadedName.isEmpty() ? juce::String ("Nothing loaded") : "Loaded: " + loadedName,
+                    juce::Rectangle<float> (card.getX() + 18, card.getY() + 34, 170, 16), juce::Justification::centredLeft, true);
+        g.setColour (juce::Colours::white.withAlpha (0.3f));
+        g.setFont (font (9.0f));
+        g.drawText ("@buyorbealoser", juce::Rectangle<float> (card.getX() + 18, card.getBottom() - 18, 120, 12), juce::Justification::centredLeft);
+        return;
+    }
+
     g.setColour (juce::Colours::white);
     g.setFont (font (18.0f));
     g.drawText ("LOADOUT", juce::Rectangle<float> (card.getX() + 22, card.getY() + 16, 200, 24), juce::Justification::centredLeft);
@@ -178,16 +220,27 @@ void LoadoutEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colours::white.withAlpha (0.55f));
     g.setFont (font (11.0f, false));
-    g.drawText (proc.library->getScanStatus(), (int) card.getX() + 22, (int) card.getBottom() - 34, (int) card.getWidth() - 160, 18,
+    g.drawText (proc.library->getScanStatus(), (int) card.getX() + 22, (int) card.getBottom() - 34, (int) card.getWidth() - 170, 18,
                 juce::Justification::centredLeft, true);
 
     g.setColour (juce::Colours::white.withAlpha (0.32f));
     g.setFont (font (10.0f));
-    g.drawText ("@buyorbealoser", (int) card.getRight() - 140, (int) card.getBottom() - 34, 118, 18, juce::Justification::centredRight);
+    g.drawText ("@buyorbealoser", (int) card.getX() + 112, (int) card.getY() + 38, 140, 14, juce::Justification::centredLeft);
 }
 
 void LoadoutEditor::resized()
 {
+    if (! optionsVisible)
+    {
+        auto r = getLocalBounds().reduced (14).reduced (14, 0);
+        auto right = r.removeFromRight (196).withSizeKeepingCentre (196, 32);
+        optionsButton.setBounds (right.removeFromRight (80));
+        right.removeFromRight (8);
+        openWheel.setBounds (right);
+        return;
+    }
+
+    optionsButton.setBounds (getWidth() - 14 - 22 - 110, getHeight() - 14 - 46, 110, 30);
     auto card = getLocalBounds().reduced (14).reduced (22, 0);
     nameEditor.setBounds (card.getRight() - 170, 30, 170, 30);
 

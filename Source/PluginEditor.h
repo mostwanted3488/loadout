@@ -14,6 +14,9 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
 
+    /** Compact bar (default) or the full options panel. */
+    void setOptionsVisible (bool);
+
 private:
     struct GlassLook : juce::LookAndFeel_V4
     {
@@ -29,7 +32,8 @@ private:
     LoadoutProcessor& proc;
     GlassLook look;
 
-    juce::TextButton openWheel, showPlugin, removePlugin, sendMode, soundToggle, scan;
+    juce::TextButton openWheel, optionsButton, showPlugin, removePlugin, sendMode, soundToggle, scan;
+    bool optionsVisible = false;
     juce::TextEditor nameEditor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoadoutEditor)

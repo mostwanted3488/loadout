@@ -1,4 +1,5 @@
 #include "WheelOverlay.h"
+#include "PluginEditor.h"
 
 using namespace juce::gl;
 
@@ -8,6 +9,10 @@ namespace
     constexpr float RO = 246.0f, RI = 104.0f, LR = 172.0f;
 
     std::unique_ptr<WheelOverlay>& currentOverlay()   { static std::unique_ptr<WheelOverlay> o; return o; }
+
+    // where the wheel was when it hid itself for a drag into FL (so it comes back the same)
+    struct Resume { bool valid = false, inFolder = false, searching = false; juce::String folder, query; int page = 0; };
+    Resume& resumeState()                             { static Resume r; return r; }
     bool& captureInFlight()                           { static bool b = false; return b; }
 
     juce::Point<float> dirOf (int i)
@@ -276,6 +281,24 @@ WheelOverlay::WheelOverlay (LoadoutProcessor& o, juce::Image img, juce::Rectangl
 {
     snapshot = img.isValid() ? img.convertedToFormat (juce::Image::ARGB) : makeFallbackBackdrop();
     recents = lib->getRecents();
+
+    if (auto& rs = resumeState(); rs.valid)
+    {
+        rs.valid = false;
+        if (rs.inFolder)
+        {
+            inFolder = true;
+            folderName = rs.folder;
+            folderItems = lib->getFolderContents (rs.folder);
+        }
+        if (rs.searching)
+        {
+            searching = true;
+            query = rs.query;
+            searchResults = lib->search (query, 100);
+        }
+        page = juce::jlimit (0, juce::jmax (0, numPages() - 1), rs.page);
+    }
 
     setOpaque (true);
     setWantsKeyboardFocus (true);
@@ -669,12 +692,30 @@ void WheelOverlay::tryExternalDrag()
     externalStarted = true;
     const auto item = dragItem;
 
+    auto& rs = resumeState();
+    rs.valid = true;
+    rs.inFolder = inFolder;
+    rs.folder = folderName;
+    rs.searching = searching;
+    rs.query = query;
+    rs.page = page;
+
+    // once the plugin is dropped in FL, bring the wheel back (fresh screen capture) to drag more
     const bool started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
         { fst.getFullPathName() }, false, this,
-        [] { juce::MessageManager::callAsync ([] { currentOverlay().reset(); }); });
+        [o = &owner, alive = ownerAlive]
+        {
+            juce::MessageManager::callAsync ([o, alive]
+            {
+                currentOverlay().reset();
+                if (*alive)
+                    juce::Timer::callAfterDelay (120, [o, alive] { if (*alive) WheelOverlay::open (*o); });
+            });
+        });
 
     if (! started)
     {
+        rs.valid = false;
         externalStarted = false;
         toast ("Drag failed", "couldn't start the drag");
         return;
@@ -1152,9 +1193,10 @@ void WheelOverlay::layout()
     {
         const juce::StringArray labels { "Send to  " + juce::String (lib->pickTracks ? "Pick tracks" : "This track"),
                                          "Sound  " + juce::String (lib->soundEnabled ? "On" : "Off"),
-                                         U ("\xe2\x86\xba  Reset slots") };
+                                         U ("\xe2\x86\xba  Reset slots"),
+                                         juce::String ("Options") };
         float y = bounds.getBottom() - 16.0f - 30.0f;
-        toolRects.assign (3, {});
+        toolRects.assign ((size_t) labels.size(), {});
         for (int i = labels.size(); --i >= 0;)
         {
             const float w = textWidth (font (11.0f), labels[i]) + 28.0f;
@@ -1165,6 +1207,15 @@ void WheelOverlay::layout()
             if (i == 0) act = [this] { lib->pickTracks = ! lib->pickTracks; lib->savePrefs(); sound (UISounds::toggle); needsRepaint = true; };
             if (i == 1) act = [this] { lib->soundEnabled = ! lib->soundEnabled; lib->savePrefs(); sound (UISounds::toggle); needsRepaint = true; };
             if (i == 2) act = [this] { lib->resetSlots(); inFolder = false; page = 0; contentChanged(); sound (UISounds::pin); toast ("Reset", "default slots"); };
+            if (i == 3) act = [this]
+            {
+                if (auto* ed = dynamic_cast<LoadoutEditor*> (owner.getActiveEditor()))
+                {
+                    ed->setOptionsVisible (true);
+                    if (auto* top = ed->getTopLevelComponent()) top->toFront (true);
+                }
+                beginClose();
+            };
             hotspots.push_back ({ r, act });
             y -= 38.0f;
         }
@@ -1402,9 +1453,10 @@ void WheelOverlay::paint (juce::Graphics& g)
 
     // --- tools text
     {
-        const juce::StringArray dims { "Send to", "Sound", "" };
-        const juce::StringArray vals { lib->pickTracks ? "Pick tracks" : "This track", lib->soundEnabled ? "On" : "Off", U ("\xe2\x86\xba  Reset slots") };
-        for (int i = 0; i < (int) toolRects.size() && i < 3; ++i)
+        const juce::StringArray dims { "Send to", "Sound", "", "" };
+        const juce::StringArray vals { lib->pickTracks ? "Pick tracks" : "This track", lib->soundEnabled ? "On" : "Off",
+                                       U ("\xe2\x86\xba  Reset slots"), juce::String ("Options") };
+        for (int i = 0; i < (int) toolRects.size() && i < 4; ++i)
         {
             const auto r = toolRects[(size_t) i].reduced (14.0f, 0.0f);
             const auto fd = font (11.0f, false);
