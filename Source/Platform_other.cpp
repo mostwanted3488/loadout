@@ -5,5 +5,3 @@ void Platform::captureScreen (juce::Rectangle<int>, std::function<void (juce::Im
 {
     juce::MessageManager::callAsync ([cb] { cb ({}); });
 }
-
-void Platform::playWav (int, const juce::MemoryBlock&) {}

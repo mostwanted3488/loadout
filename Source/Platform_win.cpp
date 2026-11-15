@@ -7,7 +7,6 @@
  #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#include <mmsystem.h>
 
 void Platform::captureScreen (juce::Rectangle<int> area, std::function<void (juce::Image)> cb)
 {
@@ -57,10 +56,4 @@ void Platform::captureScreen (juce::Rectangle<int> area, std::function<void (juc
     }
 
     juce::MessageManager::callAsync ([cb, result] { cb (result); });
-}
-
-void Platform::playWav (int, const juce::MemoryBlock& wav)
-{
-    if (wav.getSize() > 0)
-        PlaySoundW (reinterpret_cast<LPCWSTR> (wav.getData()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }

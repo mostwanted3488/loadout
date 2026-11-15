@@ -50,6 +50,7 @@ LoadoutProcessor::LoadoutProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
     instanceNumber = ++instanceCounter;
+    UISounds::init();
     const juce::ScopedLock sl (registryLock());
     registry().add (this);
 }
@@ -115,6 +116,13 @@ void LoadoutProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, numSamples);
 
+    processHosted (buffer, midi);
+    mixUISounds (buffer);
+}
+
+void LoadoutProcessor::processHosted (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    const int numSamples = buffer.getNumSamples();
     const juce::ScopedTryLock tl (hostedLock);
     if (! tl.isLocked() || hosted == nullptr)
         return;   // pass-through while a plugin is being swapped / nothing loaded
@@ -137,6 +145,61 @@ void LoadoutProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.copyFrom (ch, 0, view, ch, 0, numSamples);
+    }
+}
+
+//==============================================================================
+void LoadoutProcessor::playUISound (int soundIndex)
+{
+    if (! juce::isPositiveAndBelow (soundIndex, (int) UISounds::numSounds))
+        return;
+    const juce::AbstractFifo::ScopedWrite w (uiFifo, 1);
+    if (w.blockSize1 > 0) uiQueue[(size_t) w.startIndex1] = soundIndex;
+    else if (w.blockSize2 > 0) uiQueue[(size_t) w.startIndex2] = soundIndex;
+}
+
+void LoadoutProcessor::mixUISounds (juce::AudioBuffer<float>& buffer)
+{
+    // pick up newly requested sounds
+    {
+        const juce::AbstractFifo::ScopedRead r (uiFifo, uiFifo.getNumReady());
+        auto start = [this] (int idx)
+        {
+            const int s = uiQueue[(size_t) idx];
+            UIVoice* target = &uiVoices[0];
+            for (auto& v : uiVoices)
+            {
+                if (v.sound < 0) { target = &v; break; }
+                if (v.pos > target->pos) target = &v;   // steal the oldest
+            }
+            target->sound = s;
+            target->pos = 0.0;
+        };
+        for (int i = 0; i < r.blockSize1; ++i) start (r.startIndex1 + i);
+        for (int i = 0; i < r.blockSize2; ++i) start (r.startIndex2 + i);
+    }
+
+    const int numCh = buffer.getNumChannels(), numSamples = buffer.getNumSamples();
+    const double step = 44100.0 / juce::jmax (8000.0, currentRate);
+
+    for (auto& v : uiVoices)
+    {
+        if (v.sound < 0)
+            continue;
+
+        const auto& data = UISounds::samples ((UISounds::Sound) v.sound);
+        const auto len = (double) data.size() - 2.0;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            if (v.pos >= len) { v.sound = -1; break; }
+            const auto idx = (size_t) v.pos;
+            const auto frac = (float) (v.pos - (double) idx);
+            const float s = data[idx] + (data[idx + 1] - data[idx]) * frac;
+            for (int ch = 0; ch < numCh; ++ch)
+                buffer.addSample (ch, i, s);
+            v.pos += step;
+        }
     }
 }
 

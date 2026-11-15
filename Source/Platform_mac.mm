@@ -91,22 +91,3 @@ void Platform::captureScreen (juce::Rectangle<int> area, std::function<void (juc
 
     deliver (cb, {});
 }
-
-void Platform::playWav (int index, const juce::MemoryBlock& wav)
-{
-    static NSSound* cache[32];
-    if (index < 0 || index >= 32 || wav.getSize() == 0)
-        return;
-
-    if (cache[index] == nil)
-    {
-        NSData* data = [NSData dataWithBytes: wav.getData() length: wav.getSize()];
-        cache[index] = [[NSSound alloc] initWithData: data];
-    }
-
-    if (NSSound* s = cache[index])
-    {
-        [s stop];
-        [s play];
-    }
-}

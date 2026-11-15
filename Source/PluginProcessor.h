@@ -1,5 +1,7 @@
 #pragma once
 #include "PluginLibrary.h"
+#include "Platform.h"
+#include <array>
 
 /**
     LOADOUT: a tiny plugin host. One plugin chosen from the wheel runs inside it.
@@ -46,6 +48,10 @@ public:
     juce::String getLoadedName() const;
     bool hasPlugin() const;
 
+    /** Queues one of the wheel's UI sounds; it is mixed into this instance's output
+        (so you hear it through the DAW's audio interface). Message thread. */
+    void playUISound (int soundIndex);
+
     void showPluginWindow();
     void closePluginWindow();
 
@@ -71,6 +77,13 @@ private:
     std::unique_ptr<HostedWindow> hostedWindow;
 
     juce::AudioBuffer<float> scratch;
+
+    struct UIVoice { int sound = -1; double pos = 0.0; };
+    std::array<UIVoice, 8> uiVoices;
+    juce::AbstractFifo uiFifo { 64 };
+    std::array<int, 64> uiQueue {};
+    void mixUISounds (juce::AudioBuffer<float>&);
+    void processHosted (juce::AudioBuffer<float>&, juce::MidiBuffer&);
     double currentRate = 44100.0;
     int currentBlock = 512;
 

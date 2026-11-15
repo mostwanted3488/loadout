@@ -103,34 +103,31 @@ namespace
             burst (release, 0.008, 0.015, 1400.0 * pitch, 0.7, seed + 2);     // release
         }
 
-        juce::MemoryBlock toWav() const
+        std::vector<float> finish() const
         {
-            juce::MemoryOutputStream out;
-            const auto numSamples = (uint32_t) data.size();
-            const uint32_t dataBytes = numSamples * 2;
-
-            out.write ("RIFF", 4);  out.writeInt ((int) (36 + dataBytes));  out.write ("WAVE", 4);
-            out.write ("fmt ", 4);  out.writeInt (16);  out.writeShort (1);  out.writeShort (1);
-            out.writeInt ((int) sr); out.writeInt ((int) sr * 2);  out.writeShort (2);  out.writeShort (16);
-            out.write ("data", 4);  out.writeInt ((int) dataBytes);
-
-            // master: -4.5 dB and a gentle low-pass (~4.5 kHz) so nothing sounds harsh
+            // master: gentle low-pass (~4.5 kHz) so nothing sounds harsh
             const float a = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 4500.0f / (float) sr);
+            std::vector<float> out (data.size() + 2, 0.0f);
             float lp = 0.0f;
-            for (auto s : data)
+            for (size_t i = 0; i < data.size(); ++i)
             {
-                lp += a * (s - lp);
-                out.writeShort ((short) juce::jlimit (-32767, 32767, (int) (lp * 0.6f * 32767.0f)));
+                lp += a * (data[i] - lp);
+                out[i] = lp * 0.9f;
             }
-
-            return out.getMemoryBlock();
+            return out;
         }
     };
 
-    std::vector<juce::MemoryBlock> buildAll()
+    std::vector<std::vector<float>>& bank()
     {
-        std::vector<juce::MemoryBlock> wavs ((size_t) UISounds::numSounds);
-        auto make = [&] (UISounds::Sound s, auto&& fn) { Synth sy; fn (sy); wavs[(size_t) s] = sy.toWav(); };
+        static std::vector<std::vector<float>> b;
+        return b;
+    }
+
+    std::vector<std::vector<float>> buildAll()
+    {
+        std::vector<std::vector<float>> wavs ((size_t) UISounds::numSounds);
+        auto make = [&] (UISounds::Sound s, auto&& fn) { Synth sy; fn (sy); wavs[(size_t) s] = sy.finish(); };
 
         make (UISounds::tick,   [] (Synth& s) { s.tone (2100, .03, .03); s.tone (1050, .03, .015); });
         make (UISounds::select, [] (Synth& s) { s.tone (520, .18, .07, false, 780); s.tone (1040, .14, .02, false, 1560, .01); });
@@ -152,33 +149,42 @@ namespace
     }
 }
 
-void UISounds::play (Sound s)
+void UISounds::init()
 {
-    static const auto wavs = buildAll();
-    static double lastTick = 0.0;
+    if (bank().empty())
+        bank() = buildAll();
+}
 
+const std::vector<float>& UISounds::samples (Sound s)
+{
+    static const std::vector<float> none;
+    auto& b = bank();
+    return juce::isPositiveAndBelow ((int) s, (int) b.size()) ? b[(size_t) s] : none;
+}
+
+UISounds::Sound UISounds::filter (Sound s)
+{
+    static double lastTick = 0.0;
     if (s == tick)
     {
         const auto now = juce::Time::getMillisecondCounterHiRes();
         if (now - lastTick < 28.0)
-            return;
+            return numSounds;
         lastTick = now;
     }
-
-    if (juce::isPositiveAndBelow ((int) s, (int) numSounds))
-        Platform::playWav ((int) s, wavs[(size_t) s]);
+    return s;
 }
 
-void UISounds::playKey (juce::juce_wchar typed, bool isBackspace)
+UISounds::Sound UISounds::keyFor (juce::juce_wchar typed, bool isBackspace)
 {
     static juce::Random rng;
     static int last = -1;
 
-    if (isBackspace)      { play (keyBack); return; }
-    if (typed == ' ')     { play (keySpace); return; }
+    if (isBackspace)  return keyBack;
+    if (typed == ' ') return keySpace;
 
     int v = rng.nextInt (4);
     if (v == last) v = (v + 1) % 4;   // never the same click twice in a row
     last = v;
-    play ((Sound) (key1 + v));
+    return (Sound) (key1 + v);
 }

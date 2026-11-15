@@ -473,14 +473,15 @@ void WheelOverlay::contentChanged()
 
 void WheelOverlay::sound (UISounds::Sound s)
 {
-    if (lib->soundEnabled)
-        UISounds::play (s);
+    if (lib->soundEnabled && *ownerAlive)
+        if (const auto f = UISounds::filter (s); f != UISounds::numSounds)
+            owner.playUISound ((int) f);
 }
 
 void WheelOverlay::keySound (juce::juce_wchar ch, bool backspace)
 {
-    if (lib->soundEnabled)
-        UISounds::playKey (ch, backspace);
+    if (lib->soundEnabled && *ownerAlive)
+        owner.playUISound ((int) UISounds::keyFor (ch, backspace));
 }
 
 void WheelOverlay::toast (const juce::String& label, const juce::String& text)
@@ -1385,7 +1386,8 @@ void WheelOverlay::paint (juce::Graphics& g)
         g.setFont (ff); shadowText (g, " to...", { x, r.getY(), 80.0f, 22.0f }, juce::Justification::centredLeft, white);
 
         g.setFont (font (11.0f, false));
-        shadowText (g, U ("Toggle tracks with a click or keys 1\xe2\x80\x93" "0  \xc2\xb7  A all  \xc2\xb7  Enter load  \xc2\xb7  Esc cancel"),
+        shadowText (g, (targets.size() <= 1 ? juce::String ("Only tracks with a LOADOUT on them appear here - add LOADOUT to other inserts")
+                                         : U ("Tracks with a LOADOUT on them  \xc2\xb7  click or 1\xe2\x80\x93" "0  \xc2\xb7  A all  \xc2\xb7  Enter load")),
                     { r.getX(), r.getY() + 24.0f, r.getWidth(), 18.0f }, juce::Justification::centredLeft, white.withAlpha (0.6f));
 
         for (size_t k = 0; k < pickerRows.size(); ++k)
