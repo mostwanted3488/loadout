@@ -33,24 +33,13 @@ public:
                 lib.scanProgress = (float) i / (float) juce::jmax (1, files.size());
                 lib.triggerAsyncUpdate();
 
-                const bool hasModuleInfo = file.getChildFile ("Contents").getChildFile ("Resources").getChildFile ("moduleinfo.json").existsAsFile()
-                                        || file.getChildFile ("Contents").getChildFile ("moduleinfo.json").existsAsFile();
-                const bool isShell = file.getFileName().containsIgnoreCase ("shell");
-
-                if (hasModuleInfo || isShell)
+                // Never run plugin code while scanning: read moduleinfo.json ourselves
+                // (a plugin opened here can show dialogs / folder pickers and block the DAW).
+                const auto fromInfo = readModuleInfo (file);
+                if (! fromInfo.isEmpty())
                 {
-                    juce::OwnedArray<juce::PluginDescription> types;
-                    vst3->findAllTypesForFile (types, path);   // moduleinfo = instant; shells (Waves) are opened once
-
-                    if (! types.isEmpty())
-                    {
-                        for (auto* t : types)
-                        {
-                            found.add (*t);
-                            lib.known.addType (*t);
-                        }
-                        continue;
-                    }
+                    found.addArray (fromInfo);
+                    continue;
                 }
 
                 // already resolved earlier? reuse it
@@ -90,6 +79,89 @@ private:
 };
 
 //==============================================================================
+juce::Array<juce::PluginDescription> PluginLibrary::readModuleInfo (const juce::File& bundle)
+{
+    juce::Array<juce::PluginDescription> out;
+
+    auto info = bundle.getChildFile ("Contents").getChildFile ("Resources").getChildFile ("moduleinfo.json");
+    if (! info.existsAsFile())
+        info = bundle.getChildFile ("Contents").getChildFile ("moduleinfo.json");
+    if (! info.existsAsFile() || info.getSize() > 4 * 1024 * 1024)
+        return out;
+
+    // moduleinfo is JSON5: strip // comments and trailing commas so juce::JSON can read it
+    juce::String text;
+    {
+        const auto raw = info.loadFileAsString();
+        bool inString = false;
+        for (int i = 0; i < raw.length(); ++i)
+        {
+            const auto c = raw[i];
+            if (c == '"' && (i == 0 || raw[i - 1] != '\\')) inString = ! inString;
+            if (! inString && c == '/' && i + 1 < raw.length() && raw[i + 1] == '/')
+            {
+                while (i < raw.length() && raw[i] != '\n') ++i;
+                continue;
+            }
+            text += juce::String::charToString (c);
+        }
+        for (;;)
+        {
+            const auto before = text;
+            text = text.replace (",\n}", "\n}").replace (",\n]", "\n]").replace (", }", " }").replace (", ]", " ]").replace (",}", "}").replace (",]", "]");
+            // remove commas followed only by whitespace before a closing bracket
+            juce::String cleaned;
+            for (int i = 0; i < text.length(); ++i)
+            {
+                if (text[i] == ',')
+                {
+                    int j = i + 1;
+                    while (j < text.length() && juce::CharacterFunctions::isWhitespace (text[j])) ++j;
+                    if (j < text.length() && (text[j] == '}' || text[j] == ']'))
+                        continue;
+                }
+                cleaned += juce::String::charToString (text[i]);
+            }
+            text = cleaned;
+            if (text == before) break;
+        }
+    }
+
+    juce::var json;
+    if (juce::JSON::parse (text, json).failed())
+        return out;
+
+    const auto factoryVendor = json["Factory Info"]["Vendor"].toString();
+
+    if (auto* classes = json["Classes"].getArray())
+    {
+        for (auto& c : *classes)
+        {
+            if (c["Category"].toString() != "Audio Module Class")
+                continue;
+
+            juce::StringArray subs;
+            if (auto* arr = c["Sub Categories"].getArray())
+                for (auto& sc : *arr)
+                    subs.add (sc.toString());
+
+            juce::PluginDescription d;
+            d.pluginFormatName = "VST3";
+            d.fileOrIdentifier = bundle.getFullPathName();
+            d.name = d.descriptiveName = c["Name"].toString();
+            d.manufacturerName = c["Vendor"].toString().isNotEmpty() ? c["Vendor"].toString() : factoryVendor;
+            d.category = subs.joinIntoString ("|");
+            d.isInstrument = subs.contains ("Instrument");
+            d.version = "lazy";
+            d.lastFileModTime = bundle.getLastModificationTime();
+
+            if (d.name.isNotEmpty())
+                out.add (d);
+        }
+    }
+    return out;
+}
+
 PluginLibrary::Item PluginLibrary::Item::fromDescription (const juce::PluginDescription& d)
 {
     Item i;
@@ -111,9 +183,19 @@ std::unique_ptr<juce::PluginDescription> PluginLibrary::resolve (const juce::Plu
         return std::make_unique<juce::PluginDescription> (d);
 
     // opened before?
-    for (auto& t : known.getTypes())
-        if (t.fileOrIdentifier == d.fileOrIdentifier && t.pluginFormatName == d.pluginFormatName)
-            return std::make_unique<juce::PluginDescription> (t);
+    {
+        std::unique_ptr<juce::PluginDescription> sameFile;
+        for (auto& t : known.getTypes())
+            if (t.fileOrIdentifier == d.fileOrIdentifier && t.pluginFormatName == d.pluginFormatName)
+            {
+                if (t.name.equalsIgnoreCase (d.name))
+                    return std::make_unique<juce::PluginDescription> (t);
+                if (sameFile == nullptr)
+                    sameFile = std::make_unique<juce::PluginDescription> (t);
+            }
+        if (sameFile != nullptr && ! d.fileOrIdentifier.containsIgnoreCase ("shell"))
+            return sameFile;
+    }
 
     juce::AudioPluginFormat* fmt = nullptr;
     for (auto* f : formats.getFormats())
@@ -152,6 +234,13 @@ std::unique_ptr<juce::PluginDescription> PluginLibrary::resolve (const juce::Plu
     for (auto* t : types)
         if (t->name.equalsIgnoreCase (d.name))
             return std::make_unique<juce::PluginDescription> (*t);
+
+    if (types.size() > 1)
+    {
+        // a shell (Waves...): its plugins are now listed individually
+        error = d.name + " unpacked: its " + juce::String (types.size()) + " plugins are now in the wheel";
+        return {};
+    }
     return std::make_unique<juce::PluginDescription> (*types.getFirst());
 }
 

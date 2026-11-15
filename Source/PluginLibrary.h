@@ -90,6 +90,7 @@ private:
     juce::Array<juce::PluginDescription> listed;   // what the wheel shows (fast scan)
     mutable juce::CriticalSection listLock;
     void saveList();
+    static juce::Array<juce::PluginDescription> readModuleInfo (const juce::File& bundle);
     juce::File slotsFile()  const { return dataDir.getChildFile ("wheel.json"); }
     juce::File pedalFile()  const { return dataDir.getChildFile ("scan-in-progress.txt"); }
 
