@@ -17,6 +17,9 @@ public:
     /** Compact bar (default) or the full options panel. */
     void setOptionsVisible (bool);
 
+    /** Called when the wheel closes for good (not when it hides for a drag into FL). */
+    void wheelClosed (bool showOptions);
+
 private:
     struct GlassLook : juce::LookAndFeel_V4
     {
@@ -33,7 +36,7 @@ private:
     GlassLook look;
 
     juce::TextButton openWheel, optionsButton, showPlugin, removePlugin, sendMode, soundToggle, scan;
-    bool optionsVisible = false;
+    bool optionsVisible = false, hostHidden = false;
     juce::TextEditor nameEditor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoadoutEditor)

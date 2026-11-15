@@ -1173,13 +1173,17 @@ void WheelOverlay::timerCallback()
     if (closing && openA < 0.02f)
     {
         stopTimer();
-        const bool showPlugin = openPluginAfterClose;
+        const bool showPlugin = openPluginAfterClose, showOptions = optionsRequested;
         auto* o = &owner;
         auto alive = ownerAlive;
-        juce::MessageManager::callAsync ([showPlugin, o, alive]
+        juce::MessageManager::callAsync ([showPlugin, showOptions, o, alive]
         {
             currentOverlay().reset();
-            if (showPlugin && *alive)
+            if (! *alive)
+                return;
+            if (auto* ed = dynamic_cast<LoadoutEditor*> (o->getActiveEditor()))
+                ed->wheelClosed (showOptions);
+            if (showPlugin)
                 o->showPluginWindow();
         });
         return;
@@ -1313,15 +1317,7 @@ void WheelOverlay::layout()
             if (i == 0) act = [this] { lib->pickTracks = ! lib->pickTracks; lib->savePrefs(); sound (UISounds::toggle); needsRepaint = true; };
             if (i == 1) act = [this] { lib->soundEnabled = ! lib->soundEnabled; lib->savePrefs(); sound (UISounds::toggle); needsRepaint = true; };
             if (i == 2) act = [this] { lib->resetSlots(); inFolder = false; page = 0; contentChanged(); sound (UISounds::pin); toast ("Reset", "default slots"); };
-            if (i == 3) act = [this]
-            {
-                if (auto* ed = dynamic_cast<LoadoutEditor*> (owner.getActiveEditor()))
-                {
-                    ed->setOptionsVisible (true);
-                    if (auto* top = ed->getTopLevelComponent()) top->toFront (true);
-                }
-                beginClose();
-            };
+            if (i == 3) act = [this] { optionsRequested = true; beginClose(); };
             hotspots.push_back ({ r, act });
             y -= 38.0f;
         }
